@@ -9,6 +9,7 @@ import (
 	"github.com/basith-ahmed/url-shortener/helpers"
 	"github.com/go-redis/redis/v8"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 )
 
 type request struct {
@@ -33,16 +34,16 @@ func ShortenUrl(ctx *fiber.Ctx) error {
 	}
 
 	// - rate limiting -
-	r := database.CreateClient(1) //redis
-	defer r.Close()
-	val, err := r.Get(database.Ctx, ctx.IP()).Result()
+	r2 := database.CreateClient(1) //redis
+	defer r2.Close()
+	val, err := r2.Get(database.Ctx, ctx.IP()).Result()
 	if err == redis.Nil {
-		_ = r.Set(database.Ctx, ctx.IP(), os.Getenv("API_QUOTA"), 30*60*time.Second).Err()
+		_ = r2.Set(database.Ctx, ctx.IP(), os.Getenv("API_QUOTA"), 30*60*time.Second).Err()
 	} else {
-		val, _ = r.Get(database.Ctx, ctx.IP()).Result()
+		val, _ = r2.Get(database.Ctx, ctx.IP()).Result()
 		valInt, _ := strconv.Atoi(val)
 		if valInt <= 0 {
-			limit, _ := r.TTL(database.Ctx, ctx.IP()).Result()
+			limit, _ := r2.TTL(database.Ctx, ctx.IP()).Result()
 			return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "Rate limit exceeded", "rate_limit_reset": limit / time.Nanosecond / time.Minute})
 		}
 	}
@@ -59,6 +60,30 @@ func ShortenUrl(ctx *fiber.Ctx) error {
 	// - SSL -
 	body.URL = helpers.EnforceHTTP(body.URL)
 
-	r.Decr(database.Ctx, ctx.IP())
+	// -- asigning short URL -
+	var id string
+	if body.CustomShort == "" {
+		id = uuid.New().String()[:6]
+	} else {
+		id = body.CustomShort
+	}
 
+	r := database.CreateClient(0)
+	defer r.Close()
+	val, _ = r.Get(database.Ctx, id).Result()
+	if val != "" {
+		return ctx.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "URL custom short is already in use."})
+	}
+
+	if body.Expiry == 0 {
+		body.Expiry = 24
+	}
+
+	err = r.Set(database.Ctx, id, body.URL, body.Expiry*3600*time.Second).Err()
+
+	if err != nil {
+		return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Unable to connect to server"})
+	}
+
+	r2.Decr(database.Ctx, ctx.IP())
 }
