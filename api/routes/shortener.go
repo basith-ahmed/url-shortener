@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/asaskevich/govalidator"
 	"github.com/basith-ahmed/url-shortener/database"
 	"github.com/basith-ahmed/url-shortener/helpers"
 	"github.com/go-redis/redis/v8"
